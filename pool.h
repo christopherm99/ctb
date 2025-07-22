@@ -18,8 +18,6 @@
 #ifndef _POOL_H
 #define _POOL_H
 
-#include <stdlib.h>
-
 typedef struct pool * pool_t;
 
 // configures a region of memory to work as a memory pool
@@ -32,7 +30,7 @@ void pool_free(pool_t p, void *ptr);
 #endif
 
 #ifdef POOL_IMPLEMENTATION
-
+#include <stdint.h>
 typedef uintptr_t usize;
 struct pool {
   int len, chunk_sz;

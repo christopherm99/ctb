@@ -27,7 +27,7 @@
 #ifndef _LAMBDA_H
 #define _LAMBDA_H
 
-#include <stdlib.h>
+#include <stdint.h>
 
 typedef uintptr_t usize;
 
