@@ -17,9 +17,9 @@ int main(void) {
   p = pool_new(mem, 1024, LAMBDA_SIZE(4));
   if (!(g1 = pool_alloc(p)) || !(g2 = pool_alloc(p))) errx(-1, "pool_alloc");
 
-  if (!bind(g1, f1, 3, PH(1), PH(2), PH(0))) err(-1, "bind");
+  if (!lambda_bind(g1, f1, 3, PH(1), PH(2), PH(0))) err(-1, "lambda_bind");
   printf("2 * 1 + 25: %lu\n", g1(25, 2, 1));
-  if (!bind(g2, f2, 4, PH(0), PH(0), PH(0), PH(0))) err(-1, "bind");
+  if (!lambda_bind(g2, f2, 4, PH(0), PH(0), PH(0), PH(0))) err(-1, "lambda_bind");
   printf("g: %lx\n", g2(0xBE));
   mprotect(mem, 1024, PROT_READ | PROT_WRITE);
   pool_free(p, g1);

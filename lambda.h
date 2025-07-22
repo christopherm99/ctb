@@ -47,7 +47,7 @@ typedef struct {
 // variadic arguments where the arguments to g are passed to f via the inputs
 // marked as placeholders using the PH macro. The required size is given by
 // LAMBDA_SIZE(n). The maximum value for n is given by MAX_ARGS.
-usize (*bind(usize (*g)(), usize (*f)(), int n, ...))();
+usize (*lambda_bind(usize (*g)(), usize (*f)(), int n, ...))();
 
 #endif
 #ifdef LAMBDA_IMPLEMENTATION
@@ -65,7 +65,7 @@ usize (*bind(usize (*g)(), usize (*f)(), int n, ...))();
 #define mov(d, s) 0xAA0003E0 + (s << 16) + d
 #define br(r)     0xD61F0000 + ((r) << 5)
 
-usize (*bind(usize (*g)(), usize (*f)(), int n, ...))() {
+usize (*lambda_bind(usize (*g)(), usize (*f)(), int n, ...))() {
   uint32_t *p = (uint32_t *)g;
   usize *d;
   va_list _args;
