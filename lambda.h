@@ -38,15 +38,20 @@ typedef struct {
 
 #define LDR(x) ((arg_t){ x, 0 })
 #define MOV(x) ((arg_t){ x, 1 })
-#define LAMBDA_SIZE(n) (12 * (n) + 8)
 #ifdef __aarch64__
+#define LAMBDA_MAX(n) (12 * (n) + 8)
+#define LAMBDA_SIZE(movs, ldrs, cycles) (4 * ((movs) + (cycles)) + 12 * (ldrs) + 8)
 #define MAX_ARGS 8
 #endif
 
 // creates a new function g from a function f, number of arguments n, and
-// variadic arguments where the arguments to g are passed to f via the inputs
-// marked as placeholders using the PH macro. The required size is given by
-// LAMBDA_SIZE(n). The maximum value for n is given by MAX_ARGS.
+// variadic arguments specified using the LDR and MOV macros. Arguments using
+// LDR will inserted at the corresponding argument index, whereas arguments
+// using MOV will move the data stored at g's argument index to the
+// corresponding destination index. The maximum required size is given by
+// LAMBDA_MAX(n) and the exact size can be computed with
+// LAMBDA_SIZE(movs, ldrs, cycles), where cycles is the total number of disjoint
+// cycles in the mov operations. The maximum value for n is given by MAX_ARGS.
 usize (*lambda_bind(usize (*g)(), usize (*f)(), int n, ...))();
 
 #endif
