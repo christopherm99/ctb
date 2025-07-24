@@ -33,11 +33,11 @@ typedef uintptr_t usize;
 
 typedef struct {
   usize val;
-  char  ph;
+  char  mov;
 } arg_t;
 
-#define ARG(x) ((arg_t){ x, 0 })
-#define PH(x) ((arg_t){ x, 1 })
+#define LDR(x) ((arg_t){ x, 0 })
+#define MOV(x) ((arg_t){ x, 1 })
 #define LAMBDA_SIZE(n) (12 * (n) + 8)
 #ifdef __aarch64__
 #define MAX_ARGS 8
@@ -61,56 +61,65 @@ usize (*lambda_bind(usize (*g)(), usize (*f)(), int n, ...))();
 #ifdef __aarch64__
 
 #define nop       0xD503201F
-#define ldr(r, o) 0x58000000 + ((o) << 3) + r
-#define mov(d, s) 0xAA0003E0 + (s << 16) + d
+#define ldr(r, o) 0x58000000 + ((o) << 3) + (r)
+#define mov(d, s) 0xAA0003E0 + ((s) << 16) + (d)
 #define br(r)     0xD61F0000 + ((r) << 5)
+
+enum { TO_MOVE, BEING_MOVED, MOVED };
+
+// https://inria.hal.science/inria-00289709
+static void move_one(uint32_t **p, int n, int i, int src[static n], const int dst[static n], char status[static n]) {
+  if (src[i] != dst[i]) {
+    status[i] = BEING_MOVED;
+    for (int j = 0; j < n; j++)
+      if (src[j] == dst[i])
+        switch (status[j]) {
+          case TO_MOVE: move_one(p, n, j, src, dst, status); break;
+          case BEING_MOVED: *(*p)++ = mov(src[j] = 16, src[j]); break;
+        }
+    *(*p)++ = mov(dst[i], src[i]);
+    status[i] = MOVED;
+  }
+}
 
 usize (*lambda_bind(usize (*g)(), usize (*f)(), int n, ...))() {
   uint32_t *p = (uint32_t *)g;
   usize *d;
-  va_list _args;
-  arg_t args[MAX_ARGS];
-  int src[MAX_ARGS];
-  char done[MAX_ARGS] = { 0 };
-  int n_ph = 0;
+  va_list args;
+  int n_ldr = 0, n_mov = 0, msrc[MAX_ARGS] = {}, mdst[MAX_ARGS] = {}, ldst[MAX_ARGS] = {};
+  usize lsrc[MAX_ARGS] = {};
+  char status[MAX_ARGS] = { 0 };
 
-  va_start(_args, n);
+  va_start(args, n);
   for (int i = 0; i < n; i++) {
-    args[i] = va_arg(_args, arg_t);
-    src[i] = args[i].ph ? args[i].val : i;
-    if (args[i].ph) n_ph++;
+    arg_t arg = va_arg(args, arg_t);
+    if (arg.mov) {
+      msrc[n_mov] = arg.val;
+      mdst[n_mov++] = i;
+    }
+    else {
+      lsrc[n_ldr] = arg.val;
+      ldst[n_ldr++] = i;
+    }
   }
-  va_end(_args);
+  va_end(args);
 
 #if LAMBDA_USE_MPROTECT
   if (mprotect((void *)((usize)g & ~0xFFF), LAMBDA_SIZE(n), PROT_READ | PROT_WRITE)) return NULL;
 #endif
 
-  for (int i = 0; i < n; i++) {
-    int j;
+  for (int i = 0; i < n_mov; i++)
+    if (status[i] == TO_MOVE) move_one(&p, n_mov, i, msrc, mdst, status);
 
-    if (done[i] || src[i] == i) { done[i] = 1; continue; };
-    if (done[src[i]]) { *p++ = mov(i, src[i]); done[i] = 1; continue; }
-    *p++ = mov(16, i);
-    for (j = i; src[j] != i && src[j] != j; j = src[j]) {
-      *p++ = mov(j, src[j]);
-      done[j] = 1;
-    }
-    *p++ = mov(j, 16);
-    done[j] = 1;
-  }
-
-  d = (usize *)(p + (n - n_ph) + 2);
-  for (int i = 0; i < n; i++) {
-    if (!args[i].ph) {
-      *p = ldr(i, (usize)d - (usize)p);
-      p++;
-      *d++ = args[i].val;
-    }
+  d = (usize *)(p + (n - n_mov) + 2);
+  for (int i = 0; i < n_ldr; i++) {
+    *p = ldr(ldst[i], (usize)d - (usize)p);
+    p++;
+    *d++ = lsrc[i];
   }
 
   *p = ldr(16, (usize)d - (usize)p);
-  *(p+1) = br(16);
+  *++p = br(16);
   *d = (usize)f;
 
 #if LAMBDA_USE_MPROTECT
