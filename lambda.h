@@ -137,7 +137,7 @@ usize (*lambda_bind(usize (*g)(), usize (*f)(), int n, ...))() {
 
   {
 #ifdef ldr
-    usize *d = (usize *)(p + (n - n_mov) + 2);
+    usize *d = (usize *)((uint32_t *)p + (n - n_mov) + 2);
 #endif
     for (int i = 0; i < n_ldr; i++) {
 #ifdef ldr
