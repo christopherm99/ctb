@@ -110,7 +110,7 @@ usize (*lambda_bind(usize (*g)(), usize (*f)(), int n, ...))() {
   va_end(args);
 
 #if LAMBDA_USE_MPROTECT
-  if (mprotect((void *)((usize)g & ~0xFFF), LAMBDA_SIZE(n), PROT_READ | PROT_WRITE)) return NULL;
+  if (mprotect((void *)((usize)g & ~0xFFF), LAMBDA_MAX(n), PROT_READ | PROT_WRITE)) return NULL;
 #endif
 
   for (int i = 0; i < n_mov; i++)
@@ -128,7 +128,7 @@ usize (*lambda_bind(usize (*g)(), usize (*f)(), int n, ...))() {
   *d = (usize)f;
 
 #if LAMBDA_USE_MPROTECT
-  if (mprotect((void *)((usize)g & ~0xFFF), LAMBDA_SIZE(n), PROT_READ | PROT_EXEC)) return NULL;
+  if (mprotect((void *)((usize)g & ~0xFFF), LAMBDA_MAX(n), PROT_READ | PROT_EXEC)) return NULL;
 #endif
 
   return g;
