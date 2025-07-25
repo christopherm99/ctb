@@ -1,6 +1,6 @@
 SRCS := $(wildcard *.c)
 OBJS := $(SRCS:.c=.o) lambda.o pool.o
-CFLAGS := -Werror -Wall -I../.. -g -fsanitize=address
+CFLAGS := -Werror -Wall -Wextra -I../.. -g -fsanitize=address
 LDFLAGS := -fsanitize=address
 
 .PHONY: clean

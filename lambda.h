@@ -18,9 +18,7 @@
 #ifdef LAMBDA_IMPLEMENTATION
 #ifndef LAMBDA_DEFINITIONS
 #define LAMBDA_DEFINITIONS
-
 #define LAMBDA_USE_MPROTECT 0
-
 #endif
 #endif
 
@@ -42,6 +40,12 @@ typedef struct {
 #define LAMBDA_MAX(n) (12 * (n) + 8)
 #define LAMBDA_SIZE(movs, ldrs, cycles) (4 * ((movs) + (cycles)) + 12 * (ldrs) + 8)
 #define MAX_ARGS 8
+#elif defined(__x86_64__)
+#define LAMBDA_MAX(n) (6 * (n) + 12)
+#define LAMBDA_SIZE(movs, ldrs, cycles) (3 * ((movs) + (cycles)) + 10 * (ldrs) + 12)
+#define MAX_ARGS 6
+#else
+#error "unsupported architecture"
 #endif
 
 // creates a new function g from a function f, number of arguments n, and
@@ -64,32 +68,47 @@ usize (*lambda_bind(usize (*g)(), usize (*f)(), int n, ...))();
 #endif
 
 #ifdef __aarch64__
-
-#define nop       0xD503201F
-#define ldr(r, o) 0x58000000 + ((o) << 3) + (r)
-#define mov(d, s) 0xAA0003E0 + ((s) << 16) + (d)
-#define br(r)     0xD61F0000 + ((r) << 5)
+#define TMP 16
+#define mov(p,d,s) (p = (char *)memcpy(p, &(uint32_t){0xAA0003E0 + ((s) << 16) + (d)}, 4) + 4)
+#define ldr(p,r,o) (p = (char *)memcpy(p, &(uint32_t){0x58000000 + ((o) << 3) + (r)}, 4) + 4)
+#define br(p,r)    (p = (char *)memcpy(p, &(uint32_t){0xD61F0000 + ((r) << 5)}, 4) + 4)
+#elif defined(__x86_64__)
+#define TMP 6
+#define u64(x) \
+  (x >>  0) & 0xFF, (x >>  8) & 0xFF, (x >> 16) & 0xFF, (x >> 24) & 0xFF, \
+  (x >> 32) & 0xFF, (x >> 40) & 0xFF, (x >> 48) & 0xFF, (x >> 56) & 0xFF
+#define r2i(r)      ((char []){7, 6, 2, 1, 0, 1, 0})[r]
+#define rex(d,s)    (0x48 | ((s) > 3 && (s) != TMP) << 2 | ((d) > 3 && (s) != TMP))
+#define modrm(d,s)  (0xC0 | r2i(s) << 3 | r2i(d))
+#define mov(p,d,s)  (p = (char *)memcpy(p, (char []){rex(d,s), 0x89, modrm(d,s)}, 3) + 3)
+#define movi(p,d,i) (p = (char *)memcpy(p, (char []){rex(d,0), 0xB8 + r2i(d), u64(i)}, 10) + 10)
+#define j(p,i)      (p = (char *)memcpy(p, (char []){0x48, 0xB8, u64(i), 0xFF, 0xE0}, 12) + 12)
+#else
+#error "unsupported architecture"
+#endif
 
 enum { TO_MOVE, BEING_MOVED, MOVED };
 
 // https://inria.hal.science/inria-00289709
-static void move_one(uint32_t **p, int n, int i, int src[static n], const int dst[static n], char status[static n]) {
+static void move_one(void **p, int n, int i, int src[static n], const int dst[static n], char status[static n]) {
   if (src[i] != dst[i]) {
     status[i] = BEING_MOVED;
     for (int j = 0; j < n; j++)
       if (src[j] == dst[i])
         switch (status[j]) {
           case TO_MOVE: move_one(p, n, j, src, dst, status); break;
-          case BEING_MOVED: *(*p)++ = mov(src[j] = 16, src[j]); break;
+          case BEING_MOVED:
+            mov(*p, TMP, src[j]);
+            src[j] = TMP;
+            break;
         }
-    *(*p)++ = mov(dst[i], src[i]);
+    mov(*p, dst[i], src[i]);
     status[i] = MOVED;
   }
 }
 
 usize (*lambda_bind(usize (*g)(), usize (*f)(), int n, ...))() {
-  uint32_t *p = (uint32_t *)g;
-  usize *d;
+  void *p = (void *)g;
   va_list args;
   int n_ldr = 0, n_mov = 0, msrc[MAX_ARGS] = {}, mdst[MAX_ARGS] = {}, ldst[MAX_ARGS] = {};
   usize lsrc[MAX_ARGS] = {};
@@ -116,16 +135,27 @@ usize (*lambda_bind(usize (*g)(), usize (*f)(), int n, ...))() {
   for (int i = 0; i < n_mov; i++)
     if (status[i] == TO_MOVE) move_one(&p, n_mov, i, msrc, mdst, status);
 
-  d = (usize *)(p + (n - n_mov) + 2);
-  for (int i = 0; i < n_ldr; i++) {
-    *p = ldr(ldst[i], (usize)d - (usize)p);
-    p++;
-    *d++ = lsrc[i];
-  }
+  {
+#ifdef ldr
+    usize *d = (usize *)(p + (n - n_mov) + 2);
+#endif
+    for (int i = 0; i < n_ldr; i++) {
+#ifdef ldr
+      ldr(p, ldst[i], (usize)d - (usize)p);
+      *d++ = lsrc[i];
+#else
+      movi(p, ldst[i], lsrc[i]);
+#endif
+    }
 
-  *p = ldr(16, (usize)d - (usize)p);
-  *++p = br(16);
-  *d = (usize)f;
+#ifdef br
+    ldr(p, 16, (usize)d - (usize)p);
+    br(p, 16);
+    *d = (usize)f;
+#else
+    j(p, (usize)f);
+#endif
+  }
 
 #if LAMBDA_USE_MPROTECT
   if (mprotect((void *)((usize)g & ~0xFFF), LAMBDA_MAX(n), PROT_READ | PROT_EXEC)) return NULL;
@@ -133,14 +163,4 @@ usize (*lambda_bind(usize (*g)(), usize (*f)(), int n, ...))() {
 
   return g;
 }
-#elif defined(__x86_64__)
-#define u64(x) \
-  (x >> 56) & 0xFF, (x >> 48) & 0xFF, (x >> 40) & 0xFF, (x >> 32) & 0xFF, \
-  (x >> 24) & 0xFF, (x >> 16) & 0xFF, (x >>  8) & 0xFF, (x >>  0) & 0xFF
-
-#define ri(r, i) 0x48, 0xBF + r, u64(i) /* mov reg, imm */
-#define rr(r, s) 0x48, 0xBF + r, s      /* mov reg, reg */
-#define j(addr)  0x48, 0xB8, u64(addr), /* mov rax, fn */ \
-                 0xFF, 0xE0             /* jmp rax     */
-#endif
 #endif
