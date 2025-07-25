@@ -14,7 +14,7 @@ int main(void) {
   usize (*g2)(usize);
 
   if ((mem = mmap(NULL, 1024, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANON, -1, 0)) == MAP_FAILED) err(-1, "mmap");
-  p = pool_new(mem, 1024, LAMBDA_SIZE(4));
+  p = pool_new(mem, 1024, LAMBDA_MAX(4));
   if (!(g1 = pool_alloc(p)) || !(g2 = pool_alloc(p))) errx(-1, "pool_alloc");
 
   if (!lambda_bind(g1, f1, 3, LDR(2), MOV(0), MOV(1))) err(-1, "lambda_bind");
