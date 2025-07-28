@@ -27,10 +27,8 @@
 
 #include <stdint.h>
 
-typedef uintptr_t usize;
-
 typedef struct {
-  usize val;
+  uintptr_t val;
   char  mov;
 } arg_t;
 
@@ -38,7 +36,7 @@ typedef struct {
 #define MOV(x) ((arg_t){ x, 1 })
 #ifdef __aarch64__
 #define LAMBDA_MAX(n) (12 * (n) + 8)
-#define LAMBDA_SIZE(movs, ldrs, cycles) (4 * ((movs) + (cycles)) + 12 * (ldrs) + 8)
+#define LAMBDA_SIZE(movs, ldrs, cycles) (4 * ((movs) + (cycles)) + 12 * (ldrs) + 16)
 #define MAX_ARGS 8
 #elif defined(__x86_64__)
 #define LAMBDA_MAX(n) (6 * (n) + 12)
@@ -56,7 +54,7 @@ typedef struct {
 // LAMBDA_MAX(n) and the exact size can be computed with
 // LAMBDA_SIZE(movs, ldrs, cycles), where cycles is the total number of disjoint
 // cycles in the mov operations. The maximum value for n is given by MAX_ARGS.
-usize (*lambda_bind(usize (*g)(), usize (*f)(), int n, ...))();
+uintptr_t (*lambda_bind(uintptr_t (*g)(), uintptr_t (*f)(), int n, ...))();
 
 #endif
 #ifdef LAMBDA_IMPLEMENTATION
@@ -107,11 +105,11 @@ static void move_one(void **p, int n, int i, int src[static n], const int dst[st
   }
 }
 
-usize (*lambda_bind(usize (*g)(), usize (*f)(), int n, ...))() {
+uintptr_t (*lambda_bind(uintptr_t (*g)(), uintptr_t (*f)(), int n, ...))() {
   void *p = (void *)g;
   va_list args;
   int n_ldr = 0, n_mov = 0, msrc[MAX_ARGS] = {}, mdst[MAX_ARGS] = {}, ldst[MAX_ARGS] = {};
-  usize lsrc[MAX_ARGS] = {};
+  uintptr_t lsrc[MAX_ARGS] = {};
   char status[MAX_ARGS] = { 0 };
 
   va_start(args, n);
@@ -129,7 +127,7 @@ usize (*lambda_bind(usize (*g)(), usize (*f)(), int n, ...))() {
   va_end(args);
 
 #if LAMBDA_USE_MPROTECT
-  if (mprotect((void *)((usize)g & ~0xFFF), LAMBDA_MAX(n), PROT_READ | PROT_WRITE)) return NULL;
+  if (mprotect((void *)((uintptr_t)g & ~0xFFF), LAMBDA_MAX(n), PROT_READ | PROT_WRITE)) return NULL;
 #endif
 
   for (int i = 0; i < n_mov; i++)
@@ -137,11 +135,11 @@ usize (*lambda_bind(usize (*g)(), usize (*f)(), int n, ...))() {
 
   {
 #ifdef ldr
-    usize *d = (usize *)((uint32_t *)p + (n - n_mov) + 2);
+    uintptr_t *d = (uintptr_t *)((uint32_t *)p + (n - n_mov) + 2);
 #endif
     for (int i = 0; i < n_ldr; i++) {
 #ifdef ldr
-      ldr(p, ldst[i], (usize)d - (usize)p);
+      ldr(p, ldst[i], (uintptr_t)d - (uintptr_t)p);
       *d++ = lsrc[i];
 #else
       movi(p, ldst[i], lsrc[i]);
@@ -149,16 +147,16 @@ usize (*lambda_bind(usize (*g)(), usize (*f)(), int n, ...))() {
     }
 
 #ifdef br
-    ldr(p, 16, (usize)d - (usize)p);
+    ldr(p, 16, (uintptr_t)d - (uintptr_t)p);
     br(p, 16);
-    *d = (usize)f;
+    *d = (uintptr_t)f;
 #else
-    j(p, (usize)f);
+    j(p, (uintptr_t)f);
 #endif
   }
 
 #if LAMBDA_USE_MPROTECT
-  if (mprotect((void *)((usize)g & ~0xFFF), LAMBDA_MAX(n), PROT_READ | PROT_EXEC)) return NULL;
+  if (mprotect((void *)((uintptr_t)g & ~0xFFF), LAMBDA_MAX(n), PROT_READ | PROT_EXEC)) return NULL;
 #endif
 
   return g;
