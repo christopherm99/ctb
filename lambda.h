@@ -1,4 +1,4 @@
-/* lambda.h - v0.1
+/* lambda.h - v0.2
  * Functional programming for C
  *
  * Copyright (c) 2025 Christopher Milan
@@ -57,6 +57,13 @@ typedef struct {
 // cycles in the mov operations. The maximum value for n is given by MAX_ARGS.
 uintptr_t (*lambda_bind(uintptr_t (*g)(), uintptr_t (*f)(), int n, ...))();
 uintptr_t (*lambda_vbind(uintptr_t (*g)(), uintptr_t (*f)(), int n, va_list args))();
+
+// the same as lambda_bind, but all arguments are automatically interpreted as
+// LDR, without requiring the wrapper macro. Start specifies the destination
+// index to start at, and arguments are inserted sequentially. MAX_ARGS corresponds
+// to the maximum value of start + n.
+uintptr_t (*lambda_bindldr(uintptr_t (*g)(), uintptr_t (*f)(), int start, int n, ...))();
+uintptr_t (*lambda_vbindldr(uintptr_t (*g)(), uintptr_t (*f)(), int start, int n, va_list args))();
 
 #endif
 #ifdef LAMBDA_IMPLEMENTATION
@@ -155,6 +162,58 @@ uintptr_t (*lambda_vbind(uintptr_t (*g)(), uintptr_t (*f)(), int n, va_list args
       *d++ = lsrc[i];
 #else
       movi(p, ldst[i], lsrc[i]);
+#endif
+    }
+
+#ifdef br
+    ldr(p, 16, (uintptr_t)d - (uintptr_t)p);
+    br(p, 16);
+    *d = (uintptr_t)f;
+#else
+    j(p, (uintptr_t)f);
+#endif
+  }
+
+#if LAMBDA_USE_MPROTECT
+  if (mprotect((void *)((uintptr_t)g & ~0xFFF), LAMBDA_MAX(n), PROT_READ | PROT_EXEC)) return NULL;
+#endif
+
+  return g;
+}
+
+uintptr_t (*lambda_bindldr(uintptr_t (*g)(), uintptr_t (*f)(), int start, int n, ...))() {
+  va_list args;
+  uintptr_t (*ret)();
+  va_start(args, n);
+  ret = lambda_vbindldr(g, f, start, n, args);
+  va_end(args);
+  return ret;
+}
+
+uintptr_t (*lambda_vbindldr(uintptr_t (*g)(), uintptr_t (*f)(), int start, int n, va_list _args))() {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
+  void *p = (void *)g;
+#pragma GCC diagnostic pop
+  uintptr_t args[MAX_ARGS] = {0};
+
+  for (int i = 0; i < n; i++)
+    args[i] = va_arg(_args, uintptr_t);
+
+#if LAMBDA_USE_MPROTECT
+  if (mprotect((void *)((uintptr_t)g & ~0xFFF), LAMBDA_MAX(n), PROT_READ | PROT_WRITE)) return NULL;
+#endif
+
+  {
+#ifdef ldr
+    uintptr_t *d = (uintptr_t *)((uint32_t *)p + (n + start) + 2);
+#endif
+    for (int i = 0; i < n; i++) {
+#ifdef ldr
+      ldr(p, start + i, (uintptr_t)d - (uintptr_t)p);
+      *d++ = args[i];
+#else
+      movi(p, start + i, args[i]);
 #endif
     }
 
