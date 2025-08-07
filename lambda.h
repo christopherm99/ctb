@@ -26,6 +26,7 @@
 #define _LAMBDA_H
 
 #include <stdint.h>
+#include <stdarg.h>
 
 typedef struct {
   uintptr_t val;
@@ -55,12 +56,12 @@ typedef struct {
 // LAMBDA_SIZE(movs, ldrs, cycles), where cycles is the total number of disjoint
 // cycles in the mov operations. The maximum value for n is given by MAX_ARGS.
 uintptr_t (*lambda_bind(uintptr_t (*g)(), uintptr_t (*f)(), int n, ...))();
+uintptr_t (*lambda_vbind(uintptr_t (*g)(), uintptr_t (*f)(), int n, va_list args))();
 
 #endif
 #ifdef LAMBDA_IMPLEMENTATION
 
 #include <string.h>
-#include <stdarg.h>
 #ifdef LAMBDA_USE_MPROTECT
 #include <sys/mman.h>
 #endif
@@ -108,16 +109,23 @@ static void move_one(void **p, int n, int i, int src[static n], const int dst[st
 }
 
 uintptr_t (*lambda_bind(uintptr_t (*g)(), uintptr_t (*f)(), int n, ...))() {
+  va_list args;
+  uintptr_t (*ret)();
+  va_start(args, n);
+  ret = lambda_vbind(g, f, n, args);
+  va_end(args);
+  return ret;
+}
+
+uintptr_t (*lambda_vbind(uintptr_t (*g)(), uintptr_t (*f)(), int n, va_list args))() {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
   void *p = (void *)g;
 #pragma GCC diagnostic pop
-  va_list args;
   int n_ldr = 0, n_mov = 0, msrc[MAX_ARGS] = {0}, mdst[MAX_ARGS] = {0}, ldst[MAX_ARGS] = {0};
   uintptr_t lsrc[MAX_ARGS] = {0};
   char status[MAX_ARGS] = { 0 };
 
-  va_start(args, n);
   for (int i = 0; i < n; i++) {
     arg_t arg = va_arg(args, arg_t);
     if (arg.mov) {
@@ -129,7 +137,6 @@ uintptr_t (*lambda_bind(uintptr_t (*g)(), uintptr_t (*f)(), int n, ...))() {
       ldst[n_ldr++] = i;
     }
   }
-  va_end(args);
 
 #if LAMBDA_USE_MPROTECT
   if (mprotect((void *)((uintptr_t)g & ~0xFFF), LAMBDA_MAX(n), PROT_READ | PROT_WRITE)) return NULL;
