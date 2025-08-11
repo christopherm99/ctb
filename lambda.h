@@ -28,6 +28,8 @@
 #include <stdint.h>
 #include <stdarg.h>
 
+typedef uintptr_t (*fn_t)();
+
 typedef struct {
   uintptr_t val;
   char  mov;
@@ -36,13 +38,13 @@ typedef struct {
 #define LDR(x) ((arg_t){ x, 0 })
 #define MOV(x) ((arg_t){ x, 1 })
 #ifdef __aarch64__
-#define LAMBDA_MAX(n) (12 * (n) + 8)
-#define LAMBDA_SIZE(movs, ldrs, cycles) (4 * ((movs) + (cycles)) + 12 * (ldrs) + 16)
-#define MAX_ARGS 8
+#define LAMBDA_BIND_MAX_SIZE(n) (12 * (n) + 8)
+#define LAMBDA_BIND_SIZE(movs, ldrs, cycles) (4 * ((movs) + (cycles)) + 12 * (ldrs) + 16)
+#define LAMBDA_BIND_MAX_ARGS 8
 #elif defined(__x86_64__)
-#define LAMBDA_MAX(n) (6 * (n) + 12)
-#define LAMBDA_SIZE(movs, ldrs, cycles) (3 * ((movs) + (cycles)) + 10 * (ldrs) + 12)
-#define MAX_ARGS 6
+#define LAMBDA_BIND_MAX_SIZE(n) (6 * (n) + 12)
+#define LAMBDA_BIND_SIZE(movs, ldrs, cycles) (3 * ((movs) + (cycles)) + 10 * (ldrs) + 12)
+#define LAMBDA_BIND_MAX_ARGS 6
 #else
 #error "unsupported architecture"
 #endif
@@ -53,17 +55,27 @@ typedef struct {
 // using MOV will move the data stored at g's argument index to the
 // corresponding destination index. The maximum required size is given by
 // LAMBDA_MAX(n) and the exact size can be computed with
-// LAMBDA_SIZE(movs, ldrs, cycles), where cycles is the total number of disjoint
-// cycles in the mov operations. The maximum value for n is given by MAX_ARGS.
-uintptr_t (*lambda_bind(uintptr_t (*g)(), uintptr_t (*f)(), int n, ...))();
-uintptr_t (*lambda_vbind(uintptr_t (*g)(), uintptr_t (*f)(), int n, va_list args))();
+// LAMBDA_BIND_SIZE(movs, ldrs, cycles), where cycles is the total number of
+// disjoint cycles in the mov operations. The maximum value for n is given by
+// LAMBDA_BIND_MAX_ARGS.
+fn_t lambda_bind(fn_t g, fn_t f, int n, ...);
+fn_t lambda_vbind(fn_t g, fn_t f, int n, va_list args);
+
+#ifdef __aarch64__
+#define LAMBDA_COMPOSE_SIZE 40
+#elif defined(__x86_64__)
+#define LAMBDA_COMPOSE_SIZE 27
+#endif
 
 // the same as lambda_bind, but all arguments are automatically interpreted as
 // LDR, without requiring the wrapper macro. Start specifies the destination
-// index to start at, and arguments are inserted sequentially. MAX_ARGS corresponds
+// index to start at, and arguments are inserted sequentially. LAMBDA_BIND_MAX_ARGS corresponds
 // to the maximum value of start + n.
-uintptr_t (*lambda_bindldr(uintptr_t (*g)(), uintptr_t (*f)(), int start, int n, ...))();
-uintptr_t (*lambda_vbindldr(uintptr_t (*g)(), uintptr_t (*f)(), int start, int n, va_list args))();
+fn_t lambda_bindldr(fn_t g, fn_t f, int start, int n, ...);
+fn_t lambda_vbindldr(fn_t g, fn_t f, int start, int n, va_list args);
+
+// h := f \circ g
+fn_t lambda_compose(fn_t h, fn_t f, fn_t g);
 
 #endif
 #ifdef LAMBDA_IMPLEMENTATION
@@ -129,9 +141,9 @@ uintptr_t (*lambda_vbind(uintptr_t (*g)(), uintptr_t (*f)(), int n, va_list args
 #pragma GCC diagnostic ignored "-Wpedantic"
   void *p = (void *)g;
 #pragma GCC diagnostic pop
-  int n_ldr = 0, n_mov = 0, msrc[MAX_ARGS] = {0}, mdst[MAX_ARGS] = {0}, ldst[MAX_ARGS] = {0};
-  uintptr_t lsrc[MAX_ARGS] = {0};
-  char status[MAX_ARGS] = { 0 };
+  int n_ldr = 0, n_mov = 0, msrc[LAMBDA_BIND_MAX_ARGS] = {0}, mdst[LAMBDA_BIND_MAX_ARGS] = {0}, ldst[LAMBDA_BIND_MAX_ARGS] = {0};
+  uintptr_t lsrc[LAMBDA_BIND_MAX_ARGS] = {0};
+  char status[LAMBDA_BIND_MAX_ARGS] = { 0 };
 
   for (int i = 0; i < n; i++) {
     arg_t arg = va_arg(args, arg_t);
@@ -146,7 +158,7 @@ uintptr_t (*lambda_vbind(uintptr_t (*g)(), uintptr_t (*f)(), int n, va_list args
   }
 
 #if LAMBDA_USE_MPROTECT
-  if (mprotect((void *)((uintptr_t)g & ~0xFFF), LAMBDA_MAX(n), PROT_READ | PROT_WRITE)) return NULL;
+  if (mprotect((void *)((uintptr_t)g & ~0xFFF), LAMBDA_BIND_MAX_SIZE(n), PROT_READ | PROT_WRITE)) return NULL;
 #endif
 
   for (int i = 0; i < n_mov; i++)
@@ -174,8 +186,10 @@ uintptr_t (*lambda_vbind(uintptr_t (*g)(), uintptr_t (*f)(), int n, va_list args
 #endif
   }
 
+  __builtin___clear_cache(g, (char *)g + LAMBDA_BIND_MAX_SIZE(n));
+
 #if LAMBDA_USE_MPROTECT
-  if (mprotect((void *)((uintptr_t)g & ~0xFFF), LAMBDA_MAX(n), PROT_READ | PROT_EXEC)) return NULL;
+  if (mprotect((void *)((uintptr_t)g & ~0xFFF), LAMBDA_BIND_MAX_SIZE(n), PROT_READ | PROT_EXEC)) return NULL;
 #endif
 
   return g;
@@ -195,13 +209,13 @@ uintptr_t (*lambda_vbindldr(uintptr_t (*g)(), uintptr_t (*f)(), int start, int n
 #pragma GCC diagnostic ignored "-Wpedantic"
   void *p = (void *)g;
 #pragma GCC diagnostic pop
-  uintptr_t args[MAX_ARGS] = {0};
+  uintptr_t args[LAMBDA_BIND_MAX_ARGS] = {0};
 
   for (int i = 0; i < n; i++)
     args[i] = va_arg(_args, uintptr_t);
 
 #if LAMBDA_USE_MPROTECT
-  if (mprotect((void *)((uintptr_t)g & ~0xFFF), LAMBDA_MAX(n), PROT_READ | PROT_WRITE)) return NULL;
+  if (mprotect((void *)((uintptr_t)g & ~0xFFF), LAMBDA_BIND_SIZE(0,n,0), PROT_READ | PROT_WRITE)) return NULL;
 #endif
 
   {
@@ -226,10 +240,55 @@ uintptr_t (*lambda_vbindldr(uintptr_t (*g)(), uintptr_t (*f)(), int start, int n
 #endif
   }
 
+  __builtin___clear_cache(g, (char *)g + LAMBDA_BIND_SIZE(0,n,0));
+
 #if LAMBDA_USE_MPROTECT
-  if (mprotect((void *)((uintptr_t)g & ~0xFFF), LAMBDA_MAX(n), PROT_READ | PROT_EXEC)) return NULL;
+  if (mprotect((void *)((uintptr_t)g & ~0xFFF), LAMBDA_BIND_SIZE(0,n,0), PROT_READ | PROT_EXEC)) return NULL;
 #endif
 
   return g;
 }
+
+fn_t lambda_compose(fn_t h, fn_t f, fn_t g) {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
+  void *p = (void *)h;
+#pragma GCC diagnostic pop
+
+#if LAMBDA_USE_MPROTECT
+  if (mprotect((void *)((uintptr_t)h & ~0xFFF), LAMBDA_COMPOSE_SIZE, PROT_READ | PROT_WRITE)) return NULL;
+#endif
+
+#ifdef __aarch64__
+  {
+    uintptr_t *d = (uintptr_t *)((uint32_t *)p + 6);
+    ldr(p, 16, (uintptr_t)d - (uintptr_t)p);
+    *d++ = (uintptr_t)g;
+    ldr(p, 17, (uintptr_t)d - (uintptr_t)p);
+    *d = (uintptr_t)f;
+    memcpy(p, (uint32_t []){
+        0xA9BF47FE, // stp x30, x17, [sp, #-16]!
+        0xD63F0200, // blr x16
+        0xA8C147FE, // ldp x30, x17, [sp], #16
+        0xD61F0220, // br  x17
+      }, 16);
+  }
+#elif defined(__X8_64__)
+  memcpy(p, (uchar []){
+      0x48, 0xB8, u64(g), // movabs rax, g
+      0xFF, 0xD0,         // call rax
+      0x48, 0x89, 0xC7,   // mov rdi, rax
+      0x48, 0xB8, u64(f), // movabs rax, f
+      0xFF, 0xE0          // jmp rax
+    }, 27);
+#endif
+  __builtin___clear_cache(h, (char *)h + LAMBDA_COMPOSE_SIZE);
+
+#if LAMBDA_USE_MPROTECT
+  if (mprotect((void *)((uintptr_t)h & ~0xFFF), LAMBDA_COMPOSE_SIZE, PROT_READ | PROT_EXEC)) return NULL;
+#endif
+
+  return h;
+}
+
 #endif
